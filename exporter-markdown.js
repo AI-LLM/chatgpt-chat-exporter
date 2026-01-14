@@ -1,6 +1,60 @@
-(() => {
+(async () => {
     function formatDate(date = new Date()) {
         return date.toISOString().split('T')[0];
+    }
+
+    // Convert image to base64 data URL
+    async function imageToBase64(imgElement) {
+        const src = imgElement.getAttribute('src') || '';
+
+        // Skip UI images
+        if (src.includes('favicon') || src.includes('avatar')) {
+            return null;
+        }
+
+        try {
+            // For blob URLs, we can draw directly from the existing image
+            if (src.startsWith('blob:') || imgElement.complete) {
+                return drawImageToBase64(imgElement);
+            }
+
+            // For other URLs, load the image first
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.crossOrigin = 'anonymous';
+                img.onload = () => resolve(drawImageToBase64(img));
+                img.onerror = () => {
+                    console.warn('Failed to load image:', src);
+                    resolve(null);
+                };
+                img.src = src;
+                // Timeout after 5 seconds
+                setTimeout(() => resolve(null), 5000);
+            });
+        } catch (e) {
+            console.warn('Error converting image to base64:', e);
+            return null;
+        }
+    }
+
+    function drawImageToBase64(img) {
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || img.width;
+            canvas.height = img.naturalHeight || img.height;
+
+            if (canvas.width === 0 || canvas.height === 0) {
+                return null;
+            }
+
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0);
+            return canvas.toDataURL('image/png');
+        } catch (e) {
+            // CORS or other error
+            console.warn('Cannot draw image to canvas:', e);
+            return null;
+        }
     }
 
     function cleanMarkdown(text) {
@@ -203,12 +257,17 @@
                     className.includes('icon') || (element.width && element.width < 48)) {
                     return '';
                 }
-                // Handle blob URLs - extract the actual URL after "blob:"
+                // Check for pre-converted base64 data
+                const base64Data = element.getAttribute('data-base64');
+                if (base64Data) {
+                    const imgAlt = (alt && !alt.startsWith('http')) ? alt : 'Image';
+                    return `\n\n![${imgAlt}](${base64Data})\n\n`;
+                }
+                // Fallback: use original src (remove blob: prefix if present)
                 let imgSrc = src;
                 if (src.startsWith('blob:')) {
-                    imgSrc = src.substring(5); // Remove "blob:" prefix
+                    imgSrc = src.substring(5);
                 }
-                // Use alt as description, or 'Image' as fallback
                 const imgAlt = (alt && !alt.startsWith('http')) ? alt : 'Image';
                 return `\n\n![${imgAlt}](${imgSrc})\n\n`;
             }
@@ -278,7 +337,7 @@
         return result;
     }
 
-    function processMessageContent(element) {
+    async function processMessageContent(element) {
         const clone = element.cloneNode(true);
 
         // Extract images from buttons before removing them (ChatGPT wraps images in buttons)
@@ -294,6 +353,38 @@
 
         // Remove UI elements that shouldn't be in the export
         clone.querySelectorAll('svg, [class*="sr-only"], [class*="citation-pill"]').forEach(el => el.remove());
+
+        // Pre-convert all images to base64
+        const images = clone.querySelectorAll('img');
+        const originalImages = element.querySelectorAll('img');
+
+        // Create a map of src -> original img element for base64 conversion
+        const srcToOriginal = new Map();
+        originalImages.forEach(img => {
+            const src = img.getAttribute('src');
+            if (src && !srcToOriginal.has(src)) {
+                srcToOriginal.set(src, img);
+            }
+        });
+
+        // Convert each image to base64
+        for (const img of images) {
+            const src = img.getAttribute('src') || '';
+            // Skip small icons and UI images
+            if (src.includes('favicon') || src.includes('avatar') ||
+                (img.className && img.className.includes('icon'))) {
+                continue;
+            }
+
+            // Use original image element for conversion (it has the actual image data)
+            const originalImg = srcToOriginal.get(src);
+            if (originalImg) {
+                const base64 = await imageToBase64(originalImg);
+                if (base64) {
+                    img.setAttribute('data-base64', base64);
+                }
+            }
+        }
 
         // Find the markdown content container if it exists
         const markdownContainer = clone.querySelector('.markdown, [class*="markdown"]');
@@ -493,21 +584,23 @@
     const processedMessages = [];
     const seenContent = new Set();
 
-    messages.forEach((messageElement, index) => {
+    console.log('Converting images to base64...');
+    for (let index = 0; index < messages.length; index++) {
+        const messageElement = messages[index];
         const sender = identifySender(messageElement, index, messages);
-        const content = processMessageContent(messageElement);
-        
+        const content = await processMessageContent(messageElement);
+
         // Skip if empty or too short
         if (!content || content.trim().length < 30) {
             console.log(`Skipping message ${index}: too short or empty`);
-            return;
+            continue;
         }
 
         // Create a content hash for duplicate detection
         const contentHash = content.substring(0, 100).replace(/\s+/g, ' ').trim();
         if (seenContent.has(contentHash)) {
             console.log(`Skipping message ${index}: duplicate content`);
-            return;
+            continue;
         }
         seenContent.add(contentHash);
 
@@ -516,7 +609,9 @@
             content,
             originalIndex: index
         });
-    });
+
+        console.log(`Processed message ${index + 1}/${messages.length}`);
+    }
 
     // Apply sender sequence correction
     for (let i = 1; i < processedMessages.length; i++) {
