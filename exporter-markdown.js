@@ -114,8 +114,16 @@
 
         const tagName = element.tagName.toLowerCase();
 
-        // Skip UI elements
-        if (['button', 'svg', 'script', 'style', 'noscript'].includes(tagName)) {
+        // Skip UI elements (but check button for images first)
+        if (tagName === 'button') {
+            // Check if button contains an image (ChatGPT wraps images in buttons)
+            const img = element.querySelector('img');
+            if (img) {
+                return convertElementToMarkdown(img);
+            }
+            return '';
+        }
+        if (['svg', 'script', 'style', 'noscript'].includes(tagName)) {
             return '';
         }
 
@@ -195,11 +203,14 @@
                     className.includes('icon') || (element.width && element.width < 48)) {
                     return '';
                 }
-                // Skip blob URLs as they won't work outside the browser
+                // Handle blob URLs - extract the actual URL after "blob:"
+                let imgSrc = src;
                 if (src.startsWith('blob:')) {
-                    return `\n\n![${alt || 'Image'}](${alt || 'Image URL'})\n\n`;
+                    imgSrc = src.substring(5); // Remove "blob:" prefix
                 }
-                return `\n\n![${alt || 'Image'}](${src})\n\n`;
+                // Use alt as description, or 'Image' as fallback
+                const imgAlt = (alt && !alt.startsWith('http')) ? alt : 'Image';
+                return `\n\n![${imgAlt}](${imgSrc})\n\n`;
             }
 
             // Canvas
@@ -270,8 +281,19 @@
     function processMessageContent(element) {
         const clone = element.cloneNode(true);
 
+        // Extract images from buttons before removing them (ChatGPT wraps images in buttons)
+        clone.querySelectorAll('button').forEach(btn => {
+            const img = btn.querySelector('img');
+            if (img) {
+                // Replace button with the image
+                btn.parentNode.replaceChild(img.cloneNode(true), btn);
+            } else {
+                btn.remove();
+            }
+        });
+
         // Remove UI elements that shouldn't be in the export
-        clone.querySelectorAll('button, svg, [class*="sr-only"], [class*="citation-pill"]').forEach(el => el.remove());
+        clone.querySelectorAll('svg, [class*="sr-only"], [class*="citation-pill"]').forEach(el => el.remove());
 
         // Find the markdown content container if it exists
         const markdownContainer = clone.querySelector('.markdown, [class*="markdown"]');
