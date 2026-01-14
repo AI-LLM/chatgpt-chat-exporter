@@ -11,3 +11,5 @@
 ~~将img元素渲染成png下载，把src改为该png文件名~~
 
 将img元素渲染后base64编码，替换src
+
+修改exporter-html.js，用exporter-markdown.js同样的方法处理消息中的img的src，其他的html element尽量保留原样，并且将它们用到的style以inline嵌入的方式保留
