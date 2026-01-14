@@ -5,57 +5,283 @@
 
     function cleanMarkdown(text) {
         return text
-            // Only escape backslashes that aren't already escaping something
-            .replace(/\\(?![\\*_`])/g, '\\\\')
             // Clean up excessive newlines
             .replace(/\n{3,}/g, '\n\n')
             // Remove any HTML entities that might have leaked through
             .replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
-            .replace(/&amp;/g, '&');
+            .replace(/&amp;/g, '&')
+            .replace(/&nbsp;/g, ' ')
+            .replace(/&quot;/g, '"')
+            // Clean up whitespace at the start of lines (but preserve code block indentation)
+            .replace(/^[ \t]+(?!```)/gm, '')
+            .trim();
+    }
+
+    function escapeMarkdownText(text) {
+        // Escape special markdown characters in regular text
+        return text
+            .replace(/\\/g, '\\\\')
+            .replace(/\[/g, '\\[')
+            .replace(/\]/g, '\\]');
+    }
+
+    function convertTableToMarkdown(table) {
+        const rows = [];
+        const headerRow = table.querySelector('thead tr');
+        const bodyRows = table.querySelectorAll('tbody tr');
+
+        // Process header row
+        if (headerRow) {
+            const headers = [];
+            headerRow.querySelectorAll('th').forEach(th => {
+                headers.push(convertElementToMarkdown(th).replace(/\n/g, ' ').trim());
+            });
+            if (headers.length > 0) {
+                rows.push('| ' + headers.join(' | ') + ' |');
+                rows.push('| ' + headers.map(() => '---').join(' | ') + ' |');
+            }
+        }
+
+        // Process body rows
+        bodyRows.forEach(tr => {
+            const cells = [];
+            tr.querySelectorAll('td, th').forEach(cell => {
+                cells.push(convertElementToMarkdown(cell).replace(/\n/g, ' ').trim());
+            });
+            if (cells.length > 0) {
+                rows.push('| ' + cells.join(' | ') + ' |');
+            }
+        });
+
+        return rows.length > 0 ? '\n\n' + rows.join('\n') + '\n\n' : '';
+    }
+
+    function convertListToMarkdown(list, indent = 0) {
+        const items = [];
+        const isOrdered = list.tagName.toLowerCase() === 'ol';
+        const startNum = parseInt(list.getAttribute('start') || '1', 10);
+        let itemNum = startNum;
+        const indentStr = '  '.repeat(indent);
+
+        list.querySelectorAll(':scope > li').forEach(li => {
+            const prefix = isOrdered ? `${itemNum}.` : '-';
+            itemNum++;
+
+            // Process li content, handling nested lists separately
+            const childNodes = Array.from(li.childNodes);
+            let textContent = '';
+            let nestedLists = '';
+
+            childNodes.forEach(child => {
+                if (child.nodeType === Node.ELEMENT_NODE) {
+                    const tagName = child.tagName.toLowerCase();
+                    if (tagName === 'ul' || tagName === 'ol') {
+                        // Handle nested list
+                        nestedLists += convertListToMarkdown(child, indent + 1);
+                    } else {
+                        textContent += convertElementToMarkdown(child);
+                    }
+                } else if (child.nodeType === Node.TEXT_NODE) {
+                    textContent += child.textContent;
+                }
+            });
+
+            const cleanText = textContent.replace(/\n/g, ' ').trim();
+            if (cleanText) {
+                items.push(`${indentStr}${prefix} ${cleanText}`);
+            }
+            if (nestedLists) {
+                items.push(nestedLists.trimEnd());
+            }
+        });
+
+        return items.join('\n');
+    }
+
+    function convertElementToMarkdown(element) {
+        if (!element) return '';
+
+        // Handle text nodes
+        if (element.nodeType === Node.TEXT_NODE) {
+            return element.textContent || '';
+        }
+
+        // Skip non-element nodes
+        if (element.nodeType !== Node.ELEMENT_NODE) {
+            return '';
+        }
+
+        const tagName = element.tagName.toLowerCase();
+
+        // Skip UI elements
+        if (['button', 'svg', 'script', 'style', 'noscript'].includes(tagName)) {
+            return '';
+        }
+
+        // Skip elements with specific classes (UI components)
+        const className = element.className || '';
+        if (typeof className === 'string' &&
+            (className.includes('copy') || className.includes('edit') ||
+             className.includes('regenerate') || className.includes('citation-pill'))) {
+            return '';
+        }
+
+        // Process by tag type
+        switch (tagName) {
+            // Headings
+            case 'h1':
+                return '\n\n# ' + getTextContent(element) + '\n\n';
+            case 'h2':
+                return '\n\n## ' + getTextContent(element) + '\n\n';
+            case 'h3':
+                return '\n\n### ' + getTextContent(element) + '\n\n';
+            case 'h4':
+                return '\n\n#### ' + getTextContent(element) + '\n\n';
+            case 'h5':
+                return '\n\n##### ' + getTextContent(element) + '\n\n';
+            case 'h6':
+                return '\n\n###### ' + getTextContent(element) + '\n\n';
+
+            // Paragraph
+            case 'p':
+                return '\n\n' + processChildNodes(element) + '\n\n';
+
+            // Bold
+            case 'strong':
+            case 'b':
+                return '**' + processChildNodes(element) + '**';
+
+            // Italic
+            case 'em':
+            case 'i':
+                return '*' + processChildNodes(element) + '*';
+
+            // Code (inline)
+            case 'code':
+                // Check if it's inside a pre block
+                if (element.parentElement && element.parentElement.tagName.toLowerCase() === 'pre') {
+                    return element.textContent || '';
+                }
+                return '`' + (element.textContent || '') + '`';
+
+            // Code blocks
+            case 'pre': {
+                const codeEl = element.querySelector('code');
+                const code = element.textContent || '';
+                let lang = '';
+                if (codeEl) {
+                    const langMatch = codeEl.className.match(/language-([a-zA-Z0-9]+)/);
+                    lang = langMatch ? langMatch[1] : '';
+                }
+                return '\n\n```' + lang + '\n' + code.trim() + '\n```\n\n';
+            }
+
+            // Lists
+            case 'ul':
+            case 'ol':
+                return '\n\n' + convertListToMarkdown(element) + '\n\n';
+
+            // Tables
+            case 'table':
+                return convertTableToMarkdown(element);
+
+            // Images
+            case 'img': {
+                const src = element.getAttribute('src') || '';
+                const alt = element.getAttribute('alt') || '';
+                // Skip UI images (favicons, avatars, icons)
+                if (src.includes('favicon') || src.includes('avatar') ||
+                    className.includes('icon') || (element.width && element.width < 48)) {
+                    return '';
+                }
+                // Skip blob URLs as they won't work outside the browser
+                if (src.startsWith('blob:')) {
+                    return `\n\n![${alt || 'Image'}](${alt || 'Image URL'})\n\n`;
+                }
+                return `\n\n![${alt || 'Image'}](${src})\n\n`;
+            }
+
+            // Canvas
+            case 'canvas':
+                return '\n\n[Canvas Image]\n\n';
+
+            // Line break
+            case 'br':
+                return '\n';
+
+            // Horizontal rule
+            case 'hr':
+                return '\n\n---\n\n';
+
+            // Links
+            case 'a': {
+                const href = (element.getAttribute('href') || '').trim();
+                const lowerHref = href.toLowerCase();
+                if (!href || lowerHref.startsWith('javascript:') ||
+                    lowerHref.startsWith('data:') || lowerHref.startsWith('vbscript:') ||
+                    href.startsWith('#')) {
+                    return processChildNodes(element);
+                }
+                const text = getTextContent(element) || href;
+                const escapedText = escapeMarkdownText(text);
+                const safeHref = href.replace(/\\/g, '%5C').replace(/\)/g, '%29');
+                return `[${escapedText}](${safeHref})`;
+            }
+
+            // Blockquote
+            case 'blockquote':
+                return '\n\n> ' + processChildNodes(element).replace(/\n/g, '\n> ') + '\n\n';
+
+            // Span and other inline elements - just process children
+            case 'span':
+            case 'div':
+            case 'article':
+            case 'section':
+            case 'main':
+            case 'header':
+            case 'footer':
+            case 'aside':
+            case 'nav':
+                return processChildNodes(element);
+
+            // Skip hidden elements
+            case 'template':
+                return '';
+
+            default:
+                return processChildNodes(element);
+        }
+    }
+
+    function getTextContent(element) {
+        // Get text content while respecting structure
+        return processChildNodes(element).replace(/\n+/g, ' ').trim();
+    }
+
+    function processChildNodes(element) {
+        let result = '';
+        element.childNodes.forEach(child => {
+            result += convertElementToMarkdown(child);
+        });
+        return result;
     }
 
     function processMessageContent(element) {
         const clone = element.cloneNode(true);
 
         // Remove UI elements that shouldn't be in the export
-        clone.querySelectorAll('button, svg, [class*="copy"], [class*="edit"], [class*="regenerate"]').forEach(el => el.remove());
+        clone.querySelectorAll('button, svg, [class*="sr-only"], [class*="citation-pill"]').forEach(el => el.remove());
 
-        // Replace <pre><code> blocks with proper markdown
-        clone.querySelectorAll('pre').forEach(pre => {
-            const code = pre.innerText.trim();
-            const langMatch = pre.querySelector('code')?.className?.match(/language-([a-zA-Z0-9]+)/);
-            const lang = langMatch ? langMatch[1] : '';
-            const codeBlock = document.createTextNode(`\n\n\`\`\`${lang}\n${code}\n\`\`\`\n`);
-            pre.parentNode.replaceChild(codeBlock, pre);
-        });
+        // Find the markdown content container if it exists
+        const markdownContainer = clone.querySelector('.markdown, [class*="markdown"]');
+        const contentElement = markdownContainer || clone;
 
-        // Replace images and canvas with placeholders
-        clone.querySelectorAll('img, canvas').forEach(el => {
-            const placeholder = document.createTextNode('[Image or Canvas]');
-            el.parentNode.replaceChild(placeholder, el);
-        });
+        // Convert to markdown
+        let markdown = convertElementToMarkdown(contentElement);
 
-        // Convert links (including reference chips) into Markdown format
-        clone.querySelectorAll('a[href]').forEach(link => {
-            if (link.closest('pre, code')) return;
-
-            const href = (link.href || '').trim();
-            const lowerHref = href.toLowerCase();
-            if (!href || lowerHref.startsWith('javascript:') || lowerHref.startsWith('data:') || lowerHref.startsWith('vbscript:') || href.startsWith('#')) return;
-
-            const text = link.textContent.replace(/\s+/g, ' ').trim() || href;
-            const escapedText = text
-                .replace(/\\/g, '\\\\')
-                .replace(/([\[\]])/g, '\\$1');
-            const safeHref = href
-                .replace(/\\/g, '%5C')
-                .replace(/\)/g, '%29');
-            const markdown = `[${escapedText}](${safeHref})`;
-            link.parentNode.replaceChild(document.createTextNode(markdown), link);
-        });
-        // Convert remaining HTML to clean markdown text
-        return cleanMarkdown(clone.innerText.trim());
+        // Clean up the result
+        return cleanMarkdown(markdown);
     }
 
     function findMessages() {

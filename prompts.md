@@ -1,0 +1,1 @@
+修改exporter-markdown.js，保留对话消息中string,heading,table,img,ul,ol等格式和内容。DOM document样例可以参考chatgpt-example*.html
