@@ -462,11 +462,37 @@
         return consolidatedMessages;
     }
 
+    function findReplyLabel(messageElement) {
+        // Look for reply labels like "回复 1", "回复 2" in sibling or parent elements
+        const parent = messageElement.closest('.flex.max-w-full');
+        if (parent && parent.previousElementSibling) {
+            const labelEl = parent.previousElementSibling.querySelector('.font-semibold, [class*="font-semibold"]');
+            if (labelEl) {
+                const text = labelEl.textContent.trim();
+                if (/^回复\s*\d+$/.test(text) || /^Response\s*\d+$/i.test(text)) {
+                    return text;
+                }
+            }
+        }
+        // Also check parent's parent
+        const grandParent = messageElement.parentElement?.parentElement;
+        if (grandParent) {
+            const labels = grandParent.querySelectorAll('.font-semibold, [class*="font-semibold"]');
+            for (const label of labels) {
+                const text = label.textContent.trim();
+                if (/^回复\s*\d+$/.test(text) || /^Response\s*\d+$/i.test(text)) {
+                    return text;
+                }
+            }
+        }
+        return null;
+    }
+
     function identifySender(messageElement, index, allMessages) {
         // Method 1: Check for data attributes (most reliable)
         const authorRole = messageElement.getAttribute('data-message-author-role');
         if (authorRole) {
-            return authorRole === 'user' ? 'You' : 'ChatGPT';
+            return { sender: authorRole === 'user' ? 'You' : 'ChatGPT', reliable: true };
         }
 
         // Method 2: Look for avatar images with better detection
@@ -475,41 +501,41 @@
             const alt = avatar.alt?.toLowerCase() || '';
             const src = avatar.src?.toLowerCase() || '';
             const classes = avatar.className?.toLowerCase() || '';
-            
+
             // User indicators
             if (alt.includes('user') || src.includes('user') || classes.includes('user')) {
-                return 'You';
+                return { sender: 'You', reliable: false };
             }
-            
+
             // Assistant indicators
-            if (alt.includes('chatgpt') || alt.includes('assistant') || alt.includes('gpt') || 
+            if (alt.includes('chatgpt') || alt.includes('assistant') || alt.includes('gpt') ||
                 src.includes('assistant') || src.includes('chatgpt') || classes.includes('assistant')) {
-                return 'ChatGPT';
+                return { sender: 'ChatGPT', reliable: false };
             }
         }
 
         // Method 3: Content analysis with better patterns
         const text = messageElement.textContent.toLowerCase();
         const textStart = text.substring(0, 200); // Look at beginning of message
-        
+
         // Strong ChatGPT indicators
         if (textStart.match(/^(i understand|i can help|here's|i'll|let me|i'd be happy|certainly|of course)/)) {
-            return 'ChatGPT';
+            return { sender: 'ChatGPT', reliable: false };
         }
-        
-        // Strong user indicators  
+
+        // Strong user indicators
         if (textStart.match(/^(can you|please help|how do i|i need|i want|help me|could you)/)) {
-            return 'You';
+            return { sender: 'You', reliable: false };
         }
 
         // Method 4: Structural analysis - look at DOM structure
         const hasCodeBlocks = messageElement.querySelectorAll('pre, code').length > 0;
         const hasLongText = messageElement.textContent.length > 200;
         const hasLists = messageElement.querySelectorAll('ul, ol, li').length > 0;
-        
+
         // ChatGPT messages tend to be longer and more structured
         if (hasCodeBlocks && hasLongText && hasLists) {
-            return 'ChatGPT';
+            return { sender: 'ChatGPT', reliable: false };
         }
 
         // Method 5: Position-based fallback with better logic
@@ -517,20 +543,20 @@
         if (index > 0 && allMessages[index - 1]) {
             const prevText = allMessages[index - 1].textContent;
             const currentText = messageElement.textContent;
-            
+
             // If previous was short and current is long, likely user -> assistant
             if (prevText.length < 100 && currentText.length > 300) {
-                return 'ChatGPT';
+                return { sender: 'ChatGPT', reliable: false };
             }
-            
-            // If previous was long and current is short, likely assistant -> user  
+
+            // If previous was long and current is short, likely assistant -> user
             if (prevText.length > 300 && currentText.length < 100) {
-                return 'You';
+                return { sender: 'You', reliable: false };
             }
         }
 
         // Final fallback
-        return index % 2 === 0 ? 'You' : 'ChatGPT';
+        return { sender: index % 2 === 0 ? 'You' : 'ChatGPT', reliable: false };
     }
 
     function extractConversationTitle() {
@@ -583,7 +609,8 @@
     console.log('Converting images to base64...');
     for (let index = 0; index < messages.length; index++) {
         const messageElement = messages[index];
-        const sender = identifySender(messageElement, index, messages);
+        const { sender, reliable } = identifySender(messageElement, index, messages);
+        const replyLabel = findReplyLabel(messageElement);
         const content = await processMessageContent(messageElement);
 
         // Skip if empty or too short (reduced threshold for Chinese text)
@@ -602,6 +629,8 @@
 
         processedMessages.push({
             sender,
+            reliable,
+            replyLabel,
             content,
             originalIndex: index
         });
@@ -609,17 +638,22 @@
         console.log(`Processed message ${index + 1}/${messages.length}`);
     }
 
-    // Apply sender sequence correction
+    // Apply sender sequence correction only for unreliable detections
     for (let i = 1; i < processedMessages.length; i++) {
         const current = processedMessages[i];
         const previous = processedMessages[i - 1];
-        
+
+        // Skip correction if either sender was reliably detected
+        if (current.reliable || previous.reliable) {
+            continue;
+        }
+
         // If we have two consecutive messages from the same sender, try to fix it
         if (current.sender === previous.sender) {
             // Use content analysis to determine which should be flipped
             const currentLength = current.content.length;
             const previousLength = previous.content.length;
-            
+
             // If current message is much longer, it's likely ChatGPT
             if (currentLength > previousLength * 2 && currentLength > 500) {
                 current.sender = 'ChatGPT';
@@ -630,14 +664,15 @@
                 // Default alternating fix
                 current.sender = current.sender === 'You' ? 'ChatGPT' : 'You';
             }
-            
+
             console.log(`Fixed consecutive ${previous.sender} messages at positions ${i-1} and ${i}`);
         }
     }
 
     // Generate final output
-    processedMessages.forEach(({ sender, content }) => {
-        lines.push(`### **${sender}**\n`);
+    processedMessages.forEach(({ sender, replyLabel, content }) => {
+        const label = replyLabel ? ` (${replyLabel})` : '';
+        lines.push(`### **${sender}**${label}\n`);
         lines.push(content);
         lines.push('\n---\n');
     });

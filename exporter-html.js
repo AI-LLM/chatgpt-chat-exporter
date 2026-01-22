@@ -222,10 +222,35 @@
         return consolidatedMessages;
     }
 
+    function findReplyLabel(messageElement) {
+        // Look for reply labels like "回复 1", "回复 2" in sibling or parent elements
+        const parent = messageElement.closest('.flex.max-w-full');
+        if (parent && parent.previousElementSibling) {
+            const labelEl = parent.previousElementSibling.querySelector('.font-semibold, [class*="font-semibold"]');
+            if (labelEl) {
+                const text = labelEl.textContent.trim();
+                if (/^回复\s*\d+$/.test(text) || /^Response\s*\d+$/i.test(text)) {
+                    return text;
+                }
+            }
+        }
+        const grandParent = messageElement.parentElement?.parentElement;
+        if (grandParent) {
+            const labels = grandParent.querySelectorAll('.font-semibold, [class*="font-semibold"]');
+            for (const label of labels) {
+                const text = label.textContent.trim();
+                if (/^回复\s*\d+$/.test(text) || /^Response\s*\d+$/i.test(text)) {
+                    return text;
+                }
+            }
+        }
+        return null;
+    }
+
     function identifySender(messageElement, index, allMessages) {
         const authorRole = messageElement.getAttribute('data-message-author-role');
         if (authorRole) {
-            return authorRole === 'user' ? 'You' : 'ChatGPT';
+            return { sender: authorRole === 'user' ? 'You' : 'ChatGPT', reliable: true };
         }
 
         const avatars = messageElement.querySelectorAll('img');
@@ -235,11 +260,11 @@
             const classes = avatar.className?.toLowerCase() || '';
 
             if (alt.includes('user') || src.includes('user') || classes.includes('user')) {
-                return 'You';
+                return { sender: 'You', reliable: false };
             }
             if (alt.includes('chatgpt') || alt.includes('assistant') || alt.includes('gpt') ||
                 src.includes('assistant') || src.includes('chatgpt') || classes.includes('assistant')) {
-                return 'ChatGPT';
+                return { sender: 'ChatGPT', reliable: false };
             }
         }
 
@@ -247,10 +272,10 @@
         const textStart = text.substring(0, 200);
 
         if (textStart.match(/^(i understand|i can help|here's|i'll|let me|i'd be happy|certainly|of course)/)) {
-            return 'ChatGPT';
+            return { sender: 'ChatGPT', reliable: false };
         }
         if (textStart.match(/^(can you|please help|how do i|i need|i want|help me|could you)/)) {
-            return 'You';
+            return { sender: 'You', reliable: false };
         }
 
         const hasCodeBlocks = messageElement.querySelectorAll('pre, code').length > 0;
@@ -258,7 +283,7 @@
         const hasLists = messageElement.querySelectorAll('ul, ol, li').length > 0;
 
         if (hasCodeBlocks && hasLongText && hasLists) {
-            return 'ChatGPT';
+            return { sender: 'ChatGPT', reliable: false };
         }
 
         if (index > 0 && allMessages[index - 1]) {
@@ -266,14 +291,14 @@
             const currentText = messageElement.textContent;
 
             if (prevText.length < 100 && currentText.length > 300) {
-                return 'ChatGPT';
+                return { sender: 'ChatGPT', reliable: false };
             }
             if (prevText.length > 300 && currentText.length < 100) {
-                return 'You';
+                return { sender: 'You', reliable: false };
             }
         }
 
-        return index % 2 === 0 ? 'You' : 'ChatGPT';
+        return { sender: index % 2 === 0 ? 'You' : 'ChatGPT', reliable: false };
     }
 
     function extractConversationTitle() {
@@ -371,7 +396,8 @@
         console.log('HTML: Converting images to base64...');
         for (let index = 0; index < messages.length; index++) {
             const messageElement = messages[index];
-            const sender = identifySender(messageElement, index, messages);
+            const { sender, reliable } = identifySender(messageElement, index, messages);
+            const replyLabel = findReplyLabel(messageElement);
             const content = await processMessageContent(messageElement);
 
             const textContent = messageElement.textContent.trim();
@@ -390,6 +416,8 @@
 
             processedMessages.push({
                 sender,
+                reliable,
+                replyLabel,
                 content,
                 originalIndex: index
             });
@@ -397,10 +425,15 @@
             console.log(`HTML: Processed message ${index + 1}/${messages.length}`);
         }
 
-        // Apply sender sequence correction
+        // Apply sender sequence correction only for unreliable detections
         for (let i = 1; i < processedMessages.length; i++) {
             const current = processedMessages[i];
             const previous = processedMessages[i - 1];
+
+            // Skip correction if either sender was reliably detected
+            if (current.reliable || previous.reliable) {
+                continue;
+            }
 
             if (current.sender === previous.sender) {
                 const currentLength = current.content.length;
@@ -421,10 +454,11 @@
 
         // Generate HTML output
         let html = '';
-        processedMessages.forEach(({ sender, content }) => {
+        processedMessages.forEach(({ sender, replyLabel, content }) => {
+            const label = replyLabel ? ` <span class="reply-label">(${replyLabel})</span>` : '';
             html += `
                 <div class="message">
-                    <div class="sender">${sender}</div>
+                    <div class="sender">${sender}${label}</div>
                     <div class="content">${content}</div>
                 </div>
             `;
@@ -480,6 +514,11 @@
             color: #2c3e50;
             margin-bottom: 0.5rem;
             font-size: 1.1rem;
+        }
+        .reply-label {
+            font-weight: normal;
+            font-size: 0.9rem;
+            color: #666;
         }
         .content {
             word-wrap: break-word;
