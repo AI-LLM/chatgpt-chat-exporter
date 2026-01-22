@@ -197,12 +197,11 @@
 
         const validMessages = Array.from(messages).filter(msg => {
             const text = msg.textContent.trim();
-            if (text.length < 30) return false;
+            // Reduced threshold for Chinese text
+            if (text.length < 5) return false;
             if (text.length > 100000) return false;
             if (msg.querySelector('input[type="text"], textarea')) return false;
             if (msg.classList.contains('typing') || msg.classList.contains('loading')) return false;
-            const meaningfulText = text.replace(/\s+/g, ' ').trim();
-            if (meaningfulText.split(' ').length < 5) return false;
             return true;
         });
 
@@ -376,7 +375,8 @@
             const content = await processMessageContent(messageElement);
 
             const textContent = messageElement.textContent.trim();
-            if (!textContent || textContent.length < 30) {
+            // Reduced threshold for Chinese text
+            if (!textContent || textContent.length < 5) {
                 console.log(`HTML: Skipping message ${index}: too short or empty`);
                 continue;
             }

@@ -13,3 +13,7 @@
 将img元素渲染后base64编码，替换src
 
 修改exporter-html.js，用exporter-markdown.js同样的方法处理消息中的img的src，其他的html element尽量保留原样，并且将它们用到的style以inline嵌入的方式保留
+
+
+当DOM结构为samples/GitHub数据与开发者体验 (2026-01-22).html时，exporter-markdown.js输出没有包含最初的YOU输入:"通过github数据建立开发者体验评估模型的研究"
+

@@ -429,19 +429,15 @@
         // Filter and validate messages
         const validMessages = Array.from(messages).filter(msg => {
             const text = msg.textContent.trim();
-            
-            // Must have substantial content
-            if (text.length < 30) return false;
+
+            // Must have some content (reduced threshold for Chinese text)
+            if (text.length < 5) return false;
             if (text.length > 100000) return false;
-            
+
             // Skip elements that are clearly UI components
             if (msg.querySelector('input[type="text"], textarea')) return false;
             if (msg.classList.contains('typing') || msg.classList.contains('loading')) return false;
-            
-            // Must contain meaningful content (not just buttons/UI)
-            const meaningfulText = text.replace(/\s+/g, ' ').trim();
-            if (meaningfulText.split(' ').length < 5) return false;
-            
+
             return true;
         });
 
@@ -590,8 +586,8 @@
         const sender = identifySender(messageElement, index, messages);
         const content = await processMessageContent(messageElement);
 
-        // Skip if empty or too short
-        if (!content || content.trim().length < 30) {
+        // Skip if empty or too short (reduced threshold for Chinese text)
+        if (!content || content.trim().length < 5) {
             console.log(`Skipping message ${index}: too short or empty`);
             continue;
         }
