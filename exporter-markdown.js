@@ -386,9 +386,16 @@
             }
         }
 
-        // Find the markdown content container if it exists
-        const markdownContainer = clone.querySelector('.markdown, [class*="markdown"]');
-        const contentElement = markdownContainer || clone;
+        // Find the markdown content container if it exists.
+        // Skip narrowing for Claude — the response wrapper already is the content
+        // container, and it holds multiple .standard-markdown blocks we must keep.
+        const isClaudeMessage = (clone.classList && clone.classList.contains('font-claude-response')) ||
+                                clone.getAttribute('data-testid') === 'user-message';
+        let contentElement = clone;
+        if (!isClaudeMessage) {
+            const markdownContainer = clone.querySelector('.markdown, [class*="markdown"]');
+            if (markdownContainer) contentElement = markdownContainer;
+        }
 
         // Convert to markdown
         let markdown = convertElementToMarkdown(contentElement);
@@ -397,12 +404,18 @@
         return cleanMarkdown(markdown);
     }
 
+    function isClaudePage() {
+        return document.documentElement.getAttribute('data-theme') === 'claude' ||
+               !!document.querySelector('div.font-claude-response, div[data-testid="user-message"]');
+    }
+
     function findMessages() {
         // More specific selectors to avoid nested elements
         const selectors = [
             'div[data-message-author-role]', // Modern ChatGPT with clear author role
             'article[data-testid*="conversation-turn"]', // Conversation turns
             'div[data-testid="conversation-turn"]', // Specific conversation turn
+            'div[data-testid="user-message"], div.font-claude-response', // Claude (user + assistant)
             '.group\\/conversation-turn', // Fix for issue #6: More specific selector for conversation turns
             'div[class*="group"]:not([class*="group"] [class*="group"])', // Top-level groups only
         ];
@@ -495,6 +508,14 @@
             return { sender: authorRole === 'user' ? 'You' : 'ChatGPT', reliable: true };
         }
 
+        // Claude: user message and assistant response have distinct markers
+        if (messageElement.getAttribute('data-testid') === 'user-message') {
+            return { sender: 'You', reliable: true };
+        }
+        if (messageElement.classList && messageElement.classList.contains('font-claude-response')) {
+            return { sender: 'Claude', reliable: true };
+        }
+
         // Method 2: Look for avatar images with better detection
         const avatars = messageElement.querySelectorAll('img');
         for (const avatar of avatars) {
@@ -571,15 +592,17 @@
         for (const selector of titleSelectors) {
             const element = document.querySelector(selector);
             if (element && element.textContent.trim()) {
-                const title = element.textContent.trim();
+                let title = element.textContent.trim();
+                // Strip platform suffixes added to document.title
+                title = title.replace(/\s*-\s*Claude\s*$/i, '').replace(/\s*\|\s*ChatGPT\s*$/i, '').trim();
                 // Avoid generic titles
-                if (!['chatgpt', 'new chat', 'untitled', 'chat'].includes(title.toLowerCase())) {
+                if (title && !['chatgpt', 'claude', 'new chat', 'untitled', 'chat'].includes(title.toLowerCase())) {
                     return title;
                 }
             }
         }
 
-        return 'Conversation with ChatGPT';
+        return isClaudePage() ? 'Conversation with Claude' : 'Conversation with ChatGPT';
     }
 
     // Main export logic
@@ -597,9 +620,18 @@
     const date = formatDate();
     const url = window.location.href;
 
+    let sourceLabel = 'chat.openai.com';
+    try {
+        const host = new URL(url).hostname;
+        if (host) sourceLabel = host;
+    } catch (e) {}
+    if (sourceLabel === 'chat.openai.com' && isClaudePage()) {
+        sourceLabel = 'claude.ai';
+    }
+
     lines.push(`# ${title}\n`);
     lines.push(`**Date:** ${date}`);
-    lines.push(`**Source:** [chat.openai.com](${url})\n`);
+    lines.push(`**Source:** [${sourceLabel}](${url})\n`);
     lines.push(`---\n`);
 
     // Process messages with better duplicate detection
@@ -684,8 +716,14 @@
     const a = document.createElement('a');
     a.href = url2;
     // Use document title for better file naming (Issue #12)
-    const safeTitle = document.title.replace(/[<>:"/\\|?*]/g, '').replace(/\s+/g, ' ').trim();
-    a.download = safeTitle ? `${safeTitle} (${date}).md` : `ChatGPT_Conversation_${date}.md`;
+    const safeTitle = document.title
+        .replace(/\s*-\s*Claude\s*$/i, '')
+        .replace(/\s*\|\s*ChatGPT\s*$/i, '')
+        .replace(/[<>:"/\\|?*]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+    const fallbackName = isClaudePage() ? `Claude_Conversation_${date}.md` : `ChatGPT_Conversation_${date}.md`;
+    a.download = safeTitle ? `${safeTitle} (${date}).md` : fallbackName;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
