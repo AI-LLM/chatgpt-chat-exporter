@@ -351,6 +351,24 @@
             }
         });
 
+        // Convert KaTeX-rendered math back to TeX source ($...$ inline, $$...$$ block).
+        // KaTeX duplicates the equation as both MathML (with original TeX in
+        // <annotation encoding="application/x-tex">) and a deeply nested HTML render —
+        // grab the annotation so we get the author's source rather than the visual goo.
+        clone.querySelectorAll('.katex').forEach(katex => {
+            const annotation = katex.querySelector('annotation[encoding="application/x-tex"]');
+            if (!annotation) return;
+            const tex = (annotation.textContent || '').trim();
+            if (!tex) return;
+            const displayWrapper = katex.closest('.katex-display');
+            const isDisplay = !!displayWrapper;
+            const replacement = clone.ownerDocument.createElement(isDisplay ? 'div' : 'span');
+            replacement.setAttribute('data-tex', '1');
+            replacement.textContent = isDisplay ? `\n\n$$${tex}$$\n\n` : `$${tex}$`;
+            const target = displayWrapper || katex;
+            target.parentNode.replaceChild(replacement, target);
+        });
+
         // Remove UI elements that shouldn't be in the export
         clone.querySelectorAll('svg, [class*="sr-only"], [class*="citation-pill"]').forEach(el => el.remove());
 
