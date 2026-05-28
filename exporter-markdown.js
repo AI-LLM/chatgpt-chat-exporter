@@ -181,13 +181,17 @@
             return '';
         }
 
-        // Skip elements with specific classes (UI components)
-        const className = element.className || '';
-        if (typeof className === 'string' &&
-            (className.includes('copy') || className.includes('edit') ||
-             className.includes('regenerate') || className.includes('citation-pill'))) {
+        // Skip elements whose class list contains a UI-only token. Use exact
+        // token matches via classList — substring matching here previously
+        // erased Gemini's user-query-content (class `enable-luminous-edit-box-updates`
+        // contains the substring "edit") and any other class containing those
+        // letters as a fragment.
+        const classList = element.classList;
+        if (classList && (classList.contains('copy') || classList.contains('edit') ||
+                          classList.contains('regenerate') || classList.contains('citation-pill'))) {
             return '';
         }
+        const className = element.className || '';
 
         // Process by tag type
         switch (tagName) {
