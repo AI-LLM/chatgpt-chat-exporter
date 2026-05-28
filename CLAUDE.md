@@ -55,3 +55,7 @@ When ChatGPT/Gemini UI changes, update selectors in this priority order:
 - Future-proof design using multiple fallback strategies
 - Handles code blocks, formatting, links, and media elements
 - Supports both ChatGPT and Google Gemini platforms
+
+## 约束
+
+- **禁止引入 npm 依赖**：所有导出脚本必须是纯浏览器 JavaScript，能直接粘贴到浏览器开发者工具控制台运行。不允许 `npm install` 任何运行时或测试用的包（包括 `jsdom` 之类只用于本地验证的库）。验证语法用 `node --check`；功能验证靠用户在真实浏览器里跑，或对照 `samples/` 目录下已有的 `.html` / `.md` 例子。
