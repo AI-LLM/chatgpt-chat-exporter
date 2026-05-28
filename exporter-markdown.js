@@ -372,6 +372,12 @@
         // Remove UI elements that shouldn't be in the export
         clone.querySelectorAll('svg, [class*="sr-only"], [class*="citation-pill"]').forEach(el => el.remove());
 
+        // Gemini-specific noise: screen-reader labels, follow-up suggestion chips,
+        // icon-only buttons, and material icons that carry no textual content.
+        clone.querySelectorAll(
+            '.cdk-visually-hidden, elicitations, gem-icon, gem-icon-button, gem-popover, mat-icon'
+        ).forEach(el => el.remove());
+
         // Pre-convert all images to base64
         const images = clone.querySelectorAll('img');
         const originalImages = element.querySelectorAll('img');
@@ -409,8 +415,21 @@
         // container, and it holds multiple .standard-markdown blocks we must keep.
         const isClaudeMessage = (clone.classList && clone.classList.contains('font-claude-response')) ||
                                 clone.getAttribute('data-testid') === 'user-message';
+        const cloneTag = (clone.tagName || '').toLowerCase();
+        const isGeminiUser = cloneTag === 'user-query';
+        const isGeminiModel = cloneTag === 'model-response';
         let contentElement = clone;
-        if (!isClaudeMessage) {
+        if (isGeminiUser) {
+            // Narrow to the first user-query-content; the outer <user-query> also
+            // contains a nested edit-mode <user-query> we want to avoid.
+            const userContent = clone.querySelector('user-query-content');
+            if (userContent) contentElement = userContent;
+        } else if (isGeminiModel) {
+            // The actual response body lives in <message-content> > .markdown.
+            const mdContainer = clone.querySelector('message-content .markdown') ||
+                                clone.querySelector('message-content');
+            if (mdContainer) contentElement = mdContainer;
+        } else if (!isClaudeMessage) {
             const markdownContainer = clone.querySelector('.markdown, [class*="markdown"]');
             if (markdownContainer) contentElement = markdownContainer;
         }
@@ -427,9 +446,18 @@
                !!document.querySelector('div.font-claude-response, div[data-testid="user-message"]');
     }
 
+    function isGeminiPage() {
+        if (typeof window !== 'undefined' && window.location && window.location.hostname &&
+            window.location.hostname.includes('gemini.google')) {
+            return true;
+        }
+        return !!document.querySelector('user-query, model-response');
+    }
+
     function findMessages() {
         // More specific selectors to avoid nested elements
         const selectors = [
+            'user-query, model-response', // Gemini (user query + model response web components)
             'div[data-message-author-role]', // Modern ChatGPT with clear author role
             'article[data-testid*="conversation-turn"]', // Conversation turns
             'div[data-testid="conversation-turn"]', // Specific conversation turn
@@ -534,6 +562,15 @@
             return { sender: 'Claude', reliable: true };
         }
 
+        // Gemini: <user-query> and <model-response> web component tags are reliable markers.
+        const tagLower = (messageElement.tagName || '').toLowerCase();
+        if (tagLower === 'user-query') {
+            return { sender: 'You', reliable: true };
+        }
+        if (tagLower === 'model-response') {
+            return { sender: 'Gemini', reliable: true };
+        }
+
         // Method 2: Look for avatar images with better detection
         const avatars = messageElement.querySelectorAll('img');
         for (const avatar of avatars) {
@@ -612,14 +649,19 @@
             if (element && element.textContent.trim()) {
                 let title = element.textContent.trim();
                 // Strip platform suffixes added to document.title
-                title = title.replace(/\s*-\s*Claude\s*$/i, '').replace(/\s*\|\s*ChatGPT\s*$/i, '').trim();
+                title = title
+                    .replace(/\s*-\s*Claude\s*$/i, '')
+                    .replace(/\s*\|\s*ChatGPT\s*$/i, '')
+                    .replace(/\s*-\s*Google\s*Gemini\s*$/i, '')
+                    .trim();
                 // Avoid generic titles
-                if (title && !['chatgpt', 'claude', 'new chat', 'untitled', 'chat'].includes(title.toLowerCase())) {
+                if (title && !['chatgpt', 'claude', 'gemini', 'bard', 'new chat', 'untitled', 'chat'].includes(title.toLowerCase())) {
                     return title;
                 }
             }
         }
 
+        if (isGeminiPage()) return 'Conversation with Gemini';
         return isClaudePage() ? 'Conversation with Claude' : 'Conversation with ChatGPT';
     }
 
@@ -645,6 +687,8 @@
     } catch (e) {}
     if (sourceLabel === 'chat.openai.com' && isClaudePage()) {
         sourceLabel = 'claude.ai';
+    } else if (sourceLabel === 'chat.openai.com' && isGeminiPage()) {
+        sourceLabel = 'gemini.google.com';
     }
 
     lines.push(`# ${title}\n`);
@@ -737,10 +781,13 @@
     const safeTitle = document.title
         .replace(/\s*-\s*Claude\s*$/i, '')
         .replace(/\s*\|\s*ChatGPT\s*$/i, '')
+        .replace(/\s*-\s*Google\s*Gemini\s*$/i, '')
         .replace(/[<>:"/\\|?*]/g, '')
         .replace(/\s+/g, ' ')
         .trim();
-    const fallbackName = isClaudePage() ? `Claude_Conversation_${date}.md` : `ChatGPT_Conversation_${date}.md`;
+    const fallbackName = isGeminiPage() ? `Gemini_Conversation_${date}.md`
+                       : isClaudePage() ? `Claude_Conversation_${date}.md`
+                       : `ChatGPT_Conversation_${date}.md`;
     a.download = safeTitle ? `${safeTitle} (${date}).md` : fallbackName;
     document.body.appendChild(a);
     a.click();
