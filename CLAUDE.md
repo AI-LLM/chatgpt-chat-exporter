@@ -59,3 +59,4 @@ When ChatGPT/Gemini UI changes, update selectors in this priority order:
 ## 约束
 
 - **禁止引入 npm 依赖**：所有导出脚本必须是纯浏览器 JavaScript，能直接粘贴到浏览器开发者工具控制台运行。不允许 `npm install` 任何运行时或测试用的包（包括 `jsdom` 之类只用于本地验证的库）。验证语法用 `node --check`；功能验证靠用户在真实浏览器里跑，或对照 `samples/` 目录下已有的 `.html` / `.md` 例子。
+- **数学公式必须输出 TeX 源码**：ChatGPT、Claude、Gemini 三个平台都用 KaTeX 渲染公式，导出时必须还原成 `$...$`（行内）和 `$$...$$`（块级）的 TeX 语法，不能保留 KaTeX 渲染出的视觉 DOM。各平台 TeX 源码位置不同：ChatGPT / Claude 在 `<annotation encoding="application/x-tex">` 元素里；Gemini 在外层 `.math-inline` / `.math-block` 的 `data-math` 属性里。新增平台支持时务必先确认它的 TeX 源码存放方式。
