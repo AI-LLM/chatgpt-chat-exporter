@@ -351,6 +351,20 @@
             }
         });
 
+        // Gemini renders KaTeX without the application/x-tex annotation, but stores
+        // the original TeX on a wrapping .math-inline / .math-block element via the
+        // data-math attribute. Replace the entire wrapper (including its nested KaTeX
+        // DOM) with $...$ / $$...$$ before the generic annotation handler runs.
+        clone.querySelectorAll('.math-block[data-math], .math-inline[data-math]').forEach(node => {
+            const tex = (node.getAttribute('data-math') || '').trim();
+            if (!tex) return;
+            const isBlock = node.classList.contains('math-block');
+            const replacement = clone.ownerDocument.createElement(isBlock ? 'div' : 'span');
+            replacement.setAttribute('data-tex', '1');
+            replacement.textContent = isBlock ? `\n\n$$${tex}$$\n\n` : `$${tex}$`;
+            node.parentNode.replaceChild(replacement, node);
+        });
+
         // Convert KaTeX-rendered math back to TeX source ($...$ inline, $$...$$ block).
         // KaTeX duplicates the equation as both MathML (with original TeX in
         // <annotation encoding="application/x-tex">) and a deeply nested HTML render —
