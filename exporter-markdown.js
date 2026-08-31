@@ -57,8 +57,47 @@
         }
     }
 
+    // Remove empty blockquote lines ("> " with nothing after it) that the
+    // conversion leaves behind: drop them at the start/end of a quote block and
+    // collapse interior runs into a single separator line.
+    function cleanBlockquoteBlanks(text) {
+        const lines = text.split('\n');
+        const isFence = line => /^\s*(```|~~~)/.test(line);
+        const isQuote = line => /^>/.test(line);
+        const isBlankQuote = line => /^>[ \t]*$/.test(line);
+        const out = [];
+        let inCodeBlock = false;
+        let i = 0;
+
+        while (i < lines.length) {
+            const line = lines[i];
+            if (isFence(line)) inCodeBlock = !inCodeBlock;
+
+            if (inCodeBlock || !isBlankQuote(line)) {
+                out.push(line);
+                i++;
+                continue;
+            }
+
+            // Collect the whole run of blank quote lines
+            let end = i;
+            while (end < lines.length && isBlankQuote(lines[end])) end++;
+
+            const prev = out.length > 0 ? out[out.length - 1] : null;
+            const next = end < lines.length ? lines[end] : null;
+            const atBlockStart = prev === null || !isQuote(prev);
+            const atBlockEnd = next === null || !isQuote(next);
+
+            // Keep a single separator only between two quoted content lines
+            if (!atBlockStart && !atBlockEnd) out.push('>');
+            i = end;
+        }
+
+        return out.join('\n');
+    }
+
     function cleanMarkdown(text) {
-        return text
+        return cleanBlockquoteBlanks(text)
             // Clean up excessive newlines
             .replace(/\n{3,}/g, '\n\n')
             // Remove any HTML entities that might have leaked through
@@ -70,6 +109,25 @@
             // Clean up whitespace at the start of lines (but preserve code block indentation)
             .replace(/^[ \t]+(?!```)/gm, '')
             .trim();
+    }
+
+    // ChatGPT appends "utm_source=chatgpt.com" to every citation link; drop it
+    // (and any other tracking-only leftovers) from exported URLs.
+    function stripTrackingParams(url) {
+        if (!/[?&]utm_source=chatgpt\.com(&|#|$)/i.test(url)) return url;
+
+        const hashIndex = url.indexOf('#');
+        const hash = hashIndex >= 0 ? url.slice(hashIndex) : '';
+        const base = hashIndex >= 0 ? url.slice(0, hashIndex) : url;
+        const queryIndex = base.indexOf('?');
+        if (queryIndex < 0) return url;
+
+        const path = base.slice(0, queryIndex);
+        const params = base.slice(queryIndex + 1)
+            .split('&')
+            .filter(param => param.toLowerCase() !== 'utm_source=chatgpt.com');
+
+        return path + (params.length > 0 ? '?' + params.join('&') : '') + hash;
     }
 
     function escapeMarkdownText(text) {
@@ -299,7 +357,9 @@
                 }
                 const text = getTextContent(element) || href;
                 const escapedText = escapeMarkdownText(text);
-                const safeHref = href.replace(/\\/g, '%5C').replace(/\)/g, '%29');
+                const safeHref = stripTrackingParams(href)
+                    .replace(/\\/g, '%5C')
+                    .replace(/\)/g, '%29');
                 return `[${escapedText}](${safeHref})`;
             }
 
