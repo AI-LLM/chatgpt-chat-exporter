@@ -96,18 +96,93 @@
         return out.join('\n');
     }
 
+    // A fenced code block's content must survive the cleanup passes byte for byte:
+    // ASCII diagrams inside ``` blocks depend on their leading spaces and blank
+    // lines. Split the text into code / non-code chunks (fences belong to the code
+    // chunk) and only let `transform` touch the non-code ones.
+    const CODE_FENCE_RE = /^\s*(```|~~~)/;
+
+    function mapOutsideCodeBlocks(text, transform) {
+        const lines = text.split('\n');
+        const chunks = [];
+        let buffer = [];
+        let inCodeBlock = false;
+
+        const flush = () => {
+            if (buffer.length === 0) return;
+            const joined = buffer.join('\n');
+            chunks.push(inCodeBlock ? joined : transform(joined));
+            buffer = [];
+        };
+
+        for (const line of lines) {
+            if (CODE_FENCE_RE.test(line)) {
+                if (inCodeBlock) {
+                    buffer.push(line);   // closing fence stays with the code
+                    flush();
+                    inCodeBlock = false;
+                } else {
+                    flush();             // emit the preceding prose
+                    inCodeBlock = true;
+                    buffer.push(line);
+                }
+                continue;
+            }
+            buffer.push(line);
+        }
+        flush();
+
+        return chunks.join('\n');
+    }
+
+    // Collapse runs of blank lines outside code blocks (the old /\n{3,}/ pass),
+    // leaving blank lines inside code blocks untouched.
+    function collapseBlankLines(text) {
+        const lines = text.split('\n');
+        const out = [];
+        let inCodeBlock = false;
+        let blankRun = 0;
+
+        for (const line of lines) {
+            if (CODE_FENCE_RE.test(line)) {
+                inCodeBlock = !inCodeBlock;
+                blankRun = 0;
+                out.push(line);
+                continue;
+            }
+            if (!inCodeBlock && line.trim() === '') {
+                blankRun++;
+                if (blankRun > 1) continue;
+            } else {
+                blankRun = 0;
+            }
+            out.push(line);
+        }
+
+        return out.join('\n');
+    }
+
+    // Drop leading/trailing blank lines of a code block without touching the
+    // indentation of the remaining lines (String.trim would eat the first line's
+    // leading spaces and break ASCII art alignment).
+    function trimCodeBlock(code) {
+        const lines = code.replace(/\r\n?/g, '\n').split('\n');
+        while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+        while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+        return lines.map(line => line.replace(/[ \t]+$/, '')).join('\n');
+    }
+
     function cleanMarkdown(text) {
-        return cleanBlockquoteBlanks(text)
-            // Clean up excessive newlines
-            .replace(/\n{3,}/g, '\n\n')
+        const collapsed = collapseBlankLines(cleanBlockquoteBlanks(text));
+        return mapOutsideCodeBlocks(collapsed, chunk => chunk
             // Remove any HTML entities that might have leaked through
             .replace(/&lt;/g, '<')
             .replace(/&gt;/g, '>')
             .replace(/&amp;/g, '&')
             .replace(/&nbsp;/g, ' ')
             .replace(/&quot;/g, '"')
-            // Clean up whitespace at the start of lines (but preserve code block indentation)
-            .replace(/^[ \t]+(?!```)/gm, '')
+            // Clean up whitespace at the start of lines
+            .replace(/^[ \t]+/gm, ''))
             .trim();
     }
 
@@ -298,7 +373,7 @@
                     const langMatch = codeEl.className.match(/language-([a-zA-Z0-9]+)/);
                     lang = langMatch ? langMatch[1] : '';
                 }
-                return '\n\n```' + lang + '\n' + code.trim() + '\n```\n\n';
+                return '\n\n```' + lang + '\n' + trimCodeBlock(code) + '\n```\n\n';
             }
 
             // Lists

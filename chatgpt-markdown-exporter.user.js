@@ -18,6 +18,16 @@
         return date.toISOString().split('T')[0];
     }
 
+    // Trim a code block's leading/trailing blank lines without touching the
+    // indentation of the remaining lines: String.trim() would eat the first
+    // line's leading spaces and break ASCII art alignment.
+    function trimCodeBlock(code) {
+        const lines = (code || '').replace(/\r\n?/g, '\n').split('\n');
+        while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+        while (lines.length > 0 && lines[lines.length - 1].trim() === '') lines.pop();
+        return lines.map(line => line.replace(/[ \t]+$/, '')).join('\n');
+    }
+
     function cleanMarkdown(text) {
         return text
             // Only escape backslashes that aren't already escaping something
@@ -38,7 +48,7 @@
 
         // Replace <pre><code> blocks with proper markdown
         clone.querySelectorAll('pre').forEach(pre => {
-            const code = pre.innerText.trim();
+            const code = trimCodeBlock(pre.innerText);
             const langMatch = pre.querySelector('code')?.className?.match(/language-([a-zA-Z0-9]+)/);
             const lang = langMatch ? langMatch[1] : '';
             const codeBlock = document.createTextNode(`\n\n\`\`\`${lang}\n${code}\n\`\`\`\n`);
